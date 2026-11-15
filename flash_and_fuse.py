@@ -111,9 +111,18 @@ def open_usb():
     try:
         dev.set_configuration()
     except usb.core.USBError as exc:
-        raise RuntimeError(
-            f"cannot set configuration: {exc}; on Windows install UsbDk "
-            "(recommended, keeps Odin working) or bind WinUSB with Zadig")
+        # a failed bulk transfer can leave the download-mode stack wedged:
+        # a bus reset clears it far more often than rebinding the driver.
+        try:
+            dev.reset()
+            time.sleep(1.0)
+            dev = usb.core.find(idVendor=0x04E8, idProduct=0x685D,
+                                backend=backend)
+            dev.set_configuration()
+        except usb.core.USBError as exc2:
+            raise RuntimeError(
+                f"cannot set configuration: {exc2}; on Windows install UsbDk "
+                "(recommended, keeps Odin working) or bind WinUSB with Zadig")
     try:
         if dev.is_kernel_driver_active(1):
             dev.detach_kernel_driver(1)
