@@ -71,9 +71,26 @@ def cmd(dev, op, sub=0, args=(), timeout=30000):
     return ret
 
 
+def enable_usbdk(backend):
+    """Opt this libusb context into the UsbDk backend (Windows).
+
+    Without it libusb only sees devices bound to WinUSB/libusbK; with it the
+    stock Samsung driver can stay in place (Odin keeps working).  Returns True
+    when the option was accepted.
+    """
+    try:
+        import ctypes
+        lib = backend.lib
+        lib.libusb_set_option.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        # LIBUSB_OPTION_USE_USBDK = 1, must be set right after libusb_init()
+        return lib.libusb_set_option(backend.ctx, 1) == 0
+    except (AttributeError, OSError):
+        return False
+
+
 def open_usb():
     # Windows has no system libusb: prefer the DLL shipped by libusb-package,
-    # fall back to pyusb's own discovery (Linux/macOS, UsbDk, ...).
+    # fall back to pyusb's own discovery (Linux/macOS).
     try:
         import libusb_package
         backend = libusb1.get_backend(find_library=libusb_package.find_library)
@@ -83,12 +100,19 @@ def open_usb():
         raise RuntimeError(
             "no libusb backend: pip install libusb-package, or install "
             "libusb-1.0 (Linux) / UsbDk (Windows)")
+    enable_usbdk(backend)
     try:
         dev = usb.core.find(idVendor=0x04E8, idProduct=0x685D, backend=backend)
     except usb.core.NoBackendError:
         raise RuntimeError("libusb could not enumerate USB devices")
     if dev is None:
         raise RuntimeError("device not found (is it in download mode?)")
+    try:
+        dev.set_configuration()
+    except usb.core.USBError as exc:
+        raise RuntimeError(
+            f"cannot set configuration: {exc}; on Windows install UsbDk "
+            "(recommended, keeps Odin working) or bind WinUSB with Zadig")
     try:
         if dev.is_kernel_driver_active(1):
             dev.detach_kernel_driver(1)
@@ -98,8 +122,9 @@ def open_usb():
         usb.util.claim_interface(dev, 1)
     except usb.core.USBError as exc:
         raise RuntimeError(
-            f"cannot claim interface 1: {exc}; on Windows bind WinUSB to the "
-            "phone's interface 1 (Zadig) or install UsbDk")
+            f"cannot claim interface 1: {exc}; on Windows install UsbDk "
+            "(recommended, keeps Odin working) or bind WinUSB to interface 1 "
+            "with Zadig")
     return dev
 
 
