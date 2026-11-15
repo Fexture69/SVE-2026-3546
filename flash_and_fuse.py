@@ -330,7 +330,7 @@ def send_stream(dev, data, step=BLOCK):
 
 
 def put_packet(dev, stream, total, dst, timeout=600000, size_arg=None,
-               last=0, step=256):
+               last=0, step=256, announce=None):
     """Send one cumulative packet; the LK decompresses it in one pass.
 
     The compressed path's receive buffer is small (the sweep accepts 256 B,
@@ -338,7 +338,8 @@ def put_packet(dev, stream, total, dst, timeout=600000, size_arg=None,
     though the record itself is announced once.
     """
     value = total if size_arg is None else size_arg
-    cmd(dev, 102, 6, (len(stream),))
+    head = len(stream) if announce is None else announce
+    cmd(dev, 102, 6, (head,))
     send_stream(dev, stream, step=step)
     return cmd(dev, 102, 7, (0, value, 0, dst[0], dst[1], last), timeout)
 
@@ -434,7 +435,8 @@ def walk(dev, dst, left, done, total, mark, step=None):
 
 def run(code_path, bundle_path, walk_len=None, span=None, block=None,
         packet=False, out_base=None, size_arg=None, probe_chunk=False,
-        last=0, target_addr=None, sweep=False, records=False):
+        last=0, target_addr=None, sweep=False, records=False, step=256,
+        announce=None):
     code = code_path.read_bytes()
     bundle = load_bundle(bundle_path)
     if not code or len(code) > CODE_MAX or CODE_OFF + len(code) > 0x1000:
@@ -510,7 +512,8 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
                                   size_arg=size_arg)
             else:
                 ret = put_packet(dev, stream, total, boot, timeout=wait,
-                                 size_arg=size_arg, last=last)
+                                 size_arg=size_arg, last=last,
+                                 step=step, announce=announce)
             print(f"invoke {time.monotonic() - start:.3f}s -> {ret:#x}",
                   flush=True)
             if ret == RESULT_OK:
@@ -578,6 +581,10 @@ def main():
                     help="sweep packet sizes to find the transport threshold")
     ap.add_argument("--records", action="store_true",
                     help="stream the packet as small records, commit once")
+    ap.add_argument("--step", type=lambda v: int(v, 0), default=256,
+                    help="transfer step for the compressed path")
+    ap.add_argument("--announce", type=lambda v: int(v, 0), default=None,
+                    help="value announced before the stream (default size)")
     args = ap.parse_args()
     if args.soc != SOC:
         raise ValueError(f"generated loader is for {SOC}, not {args.soc}")
@@ -585,7 +592,8 @@ def main():
         raise ValueError("--span must be a positive multiple of 8")
     run(args.code.resolve(), args.bundle.resolve(), args.walk, args.span,
         args.block, args.packet, args.out_base, args.size_arg,
-        args.probe_chunk, args.last, args.target, args.sweep, args.records)
+        args.probe_chunk, args.last, args.target, args.sweep, args.records,
+        args.step, args.announce)
 
 
 if __name__ == "__main__":
