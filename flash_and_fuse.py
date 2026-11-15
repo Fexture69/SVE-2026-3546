@@ -330,11 +330,16 @@ def send_stream(dev, data, step=BLOCK):
 
 
 def put_packet(dev, stream, total, dst, timeout=600000, size_arg=None,
-               last=0):
-    """Send one cumulative packet; the LK decompresses it in one pass."""
+               last=0, step=256):
+    """Send one cumulative packet; the LK decompresses it in one pass.
+
+    The compressed path's receive buffer is small (the sweep accepts 256 B,
+    rejects 1024 B), so data must be handed over in small transfers even
+    though the record itself is announced once.
+    """
     value = total if size_arg is None else size_arg
     cmd(dev, 102, 6, (len(stream),))
-    send_stream(dev, stream)
+    send_stream(dev, stream, step=step)
     return cmd(dev, 102, 7, (0, value, 0, dst[0], dst[1], last), timeout)
 
 
