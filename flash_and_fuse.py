@@ -246,12 +246,13 @@ def send_stream(dev, data, step=BLOCK):
         rx(dev, 8)
 
 
-def put_packet(dev, stream, total, dst, timeout=600000, size_arg=None):
+def put_packet(dev, stream, total, dst, timeout=600000, size_arg=None,
+               last=0):
     """Send one cumulative packet; the LK decompresses it in one pass."""
     value = total if size_arg is None else size_arg
     cmd(dev, 102, 6, (len(stream),))
     send_stream(dev, stream)
-    return cmd(dev, 102, 7, (0, value, 0, dst[0], dst[1], 0), timeout)
+    return cmd(dev, 102, 7, (0, value, 0, dst[0], dst[1], last), timeout)
 
 
 def load_bundle(path):
@@ -344,7 +345,8 @@ def walk(dev, dst, left, done, total, mark, step=None):
 
 
 def run(code_path, bundle_path, walk_len=None, span=None, block=None,
-        packet=False, out_base=None, size_arg=None, probe_chunk=False):
+        packet=False, out_base=None, size_arg=None, probe_chunk=False,
+        last=0):
     code = code_path.read_bytes()
     bundle = load_bundle(bundle_path)
     if not code or len(code) > CODE_MAX or CODE_OFF + len(code) > 0x1000:
@@ -404,7 +406,7 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
             start = time.monotonic()
             wait = 20000 if probe_chunk else 180000
             ret = put_packet(dev, stream, total, boot, timeout=wait,
-                             size_arg=size_arg)
+                             size_arg=size_arg, last=last)
             print(f"invoke {time.monotonic() - start:.3f}s -> {ret:#x}",
                   flush=True)
             if ret != RESULT_OK:
@@ -450,6 +452,8 @@ def main():
     ap.add_argument("--probe-chunk", action="store_true",
                     help="send a >1MB first chunk: hangs the worker if the "
                          "parser reads our stream")
+    ap.add_argument("--last", type=lambda v: int(v, 0), default=0,
+                    help="last flag on the commit")
     args = ap.parse_args()
     if args.soc != SOC:
         raise ValueError(f"generated loader is for {SOC}, not {args.soc}")
@@ -457,7 +461,7 @@ def main():
         raise ValueError("--span must be a positive multiple of 8")
     run(args.code.resolve(), args.bundle.resolve(), args.walk, args.span,
         args.block, args.packet, args.out_base, args.size_arg,
-        args.probe_chunk)
+        args.probe_chunk, args.last)
 
 
 if __name__ == "__main__":
