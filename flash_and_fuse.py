@@ -526,7 +526,18 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
             cmd(dev, 102, 0)
             ret = put(dev, len(image), ent, 1, image)
             print(f"reply {ret:#x}", flush=True)
-            print("done" if ret == RESULT_OK else "FAILED", flush=True)
+            print(f"commit={ret:#x}", flush=True)
+            for _ in range(3):
+                try:
+                    st = cmd(dev, 100, 0, timeout=20000)
+                except Exception as exc:
+                    print(f"status: {exc}", flush=True)
+                    break
+                print(f"status {st:#x}", flush=True)
+                if st == RESULT_OK:
+                    break
+                time.sleep(1.0)
+            print("OK" if ret == 0 else f"commit code {ret:#x}", flush=True)
             return
 
         print("stage", flush=True)
