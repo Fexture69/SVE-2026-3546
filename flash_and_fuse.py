@@ -473,6 +473,14 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
             dev.reset()
             time.sleep(1.5)
             dev = open_usb()
+            try:
+                tx(dev, b"ODIN")
+                hello = rx(dev, 4, timeout=5000)
+                print(f"  re-handshake {hello!r}", flush=True)
+                print(f"  version {cmd(dev, 100, 0):#x}", flush=True)
+            except Exception as exc:
+                print(f"  lk wedged: {exc}", flush=True)
+                return
             for attempt in range(3):
                 time.sleep(1.0)
                 try:
