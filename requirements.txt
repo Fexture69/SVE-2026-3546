@@ -1,3 +1,4 @@
 cryptography>=45
 lz4>=4
 pyusb
+libusb-package; sys_platform == "win32"

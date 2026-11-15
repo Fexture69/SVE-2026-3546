@@ -8,6 +8,7 @@ from pathlib import Path
 
 import usb.core
 import usb.util
+from usb.backend import libusb1
 
 sys.dont_write_bytecode = True
 
@@ -71,15 +72,34 @@ def cmd(dev, op, sub=0, args=(), timeout=30000):
 
 
 def open_usb():
-    dev = usb.core.find(idVendor=0x04E8, idProduct=0x685D)
+    # Windows has no system libusb: prefer the DLL shipped by libusb-package,
+    # fall back to pyusb's own discovery (Linux/macOS, UsbDk, ...).
+    try:
+        import libusb_package
+        backend = libusb1.get_backend(find_library=libusb_package.find_library)
+    except ImportError:
+        backend = libusb1.get_backend() or None
+    if backend is None:
+        raise RuntimeError(
+            "no libusb backend: pip install libusb-package, or install "
+            "libusb-1.0 (Linux) / UsbDk (Windows)")
+    try:
+        dev = usb.core.find(idVendor=0x04E8, idProduct=0x685D, backend=backend)
+    except usb.core.NoBackendError:
+        raise RuntimeError("libusb could not enumerate USB devices")
     if dev is None:
-        raise RuntimeError("device not found")
+        raise RuntimeError("device not found (is it in download mode?)")
     try:
         if dev.is_kernel_driver_active(1):
             dev.detach_kernel_driver(1)
     except (NotImplementedError, usb.core.USBError):
         pass
-    usb.util.claim_interface(dev, 1)
+    try:
+        usb.util.claim_interface(dev, 1)
+    except usb.core.USBError as exc:
+        raise RuntimeError(
+            f"cannot claim interface 1: {exc}; on Windows bind WinUSB to the "
+            "phone's interface 1 (Zadig) or install UsbDk")
     return dev
 
 

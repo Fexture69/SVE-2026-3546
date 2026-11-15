@@ -1,12 +1,12 @@
 # SVE-2026-3546 - Unsigned code loading for S-LK
 
-This PoC uses it to fuse Secure Boot KEY2 and flash re-signed bootloader files on s5e8825 and s5e9925.
+This PoC uses it to fuse Secure Boot KEY2 and flash re-signed bootloader files on
+s5e8825, s5e9925 and s5e9945.
 
-An offline `s5e9945` profile and resolver path are included for the SM-S926B
-`S926BXXUIEZJB` firmware layout. The device-side `flash_and_fuse.py` path is
-intentionally not enabled for `s5e9945`; the profile is only validated for
-stock image parsing, signature checks, offset resolution, bundle generation,
-and loader compilation.
+The `s5e9945` profile targets the SM-S926B (Exynos 2400) on `S926BXXUIEZJB`.
+Its part map is verified against the stock tee/ree keys: every signed chunk of
+every BL member validates, and the resolver derives `out_base = 0xc8000000`
+(the decompression accumulator, *not* the `0xd1800000` parallel staging area).
 
 ## Demo
 
@@ -15,9 +15,8 @@ and loader compilation.
 ## Requirements
 
 - Python 3
-- `clang`
-- `aarch64-linux-gnu` binutils
-- libusb access to the phone
+- `clang` + `ld.lld` + `llvm-objcopy` (LLVM) **or** `aarch64-linux-gnu` binutils
+- libusb access to the phone (`libusb-package` is enough on Windows)
 
 Install the Python packages:
 
@@ -36,7 +35,7 @@ Android signer commands: [android-resigner/README.md](android-resigner/README.md
 ## 1. Sign BL and PIT
 
 ```sh
-./sign_bl.py --soc s5e9925 BL.tar.md5 device.pit
+./sign_bl.py --soc s5e9945 BL.tar.md5 device.pit
 ```
 
 Outputs:
@@ -49,13 +48,19 @@ device_RESIGNED.pit
 ## 2. Find offsets
 
 ```sh
-./resolve.py --soc s5e9925 BL_RESIGNED.tar.md5
+./resolve.py --soc s5e9945 BL_RESIGNED.tar.md5
 ```
 
 ## 3. Build the loader
 
 ```sh
-./build_loader.sh --soc s5e9925 BL_RESIGNED.tar.md5 device_RESIGNED.pit
+./build_loader.sh --soc s5e9945 BL_RESIGNED.tar.md5 device_RESIGNED.pit
+```
+
+On Windows use PowerShell with LLVM instead of the bash script:
+
+```powershell
+powershell -File build_loader.ps1 -Soc s5e9945 -Bl BL_RESIGNED.tar.md5 -Pit device_RESIGNED.pit
 ```
 
 Outputs:
@@ -68,9 +73,14 @@ loader/bundle.bin
 
 ## 4. Run
 
+Put the phone in download mode (Odin), then:
+
 ```sh
-./flash_and_fuse.py --soc s5e9925
+./flash_and_fuse.py --soc s5e9945
 ```
+
+The payload writes 24.3 MiB across 12 partitions on LUN 0/1/4 and finally the
+PIT, verifying every partition by read-back SHA-256.
 
 ## Disclaimer
 
