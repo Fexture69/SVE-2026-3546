@@ -466,7 +466,7 @@ def walk(dev, dst, left, done, total, mark, step=None):
 def run(code_path, bundle_path, walk_len=None, span=None, block=None,
         packet=False, out_base=None, size_arg=None, probe_chunk=False,
         last=0, target_addr=None, sweep=False, records=False, step=256,
-        announce=None, oversize=None, overflow=False):
+        announce=None, oversize=None, overflow=False, write_part=None):
     code = code_path.read_bytes()
     bundle = load_bundle(bundle_path)
     if not code or len(code) > CODE_MAX or CODE_OFF + len(code) > 0x1000:
@@ -517,6 +517,16 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
         boot = part(pit, b"BOOT")
         cmd(dev, 100, 5, (BLOCK,))
         cmd(dev, 102, 0)
+
+        if write_part:
+            name, path = write_part
+            image = open(path, "rb").read()
+            ent = part(pit, name.encode())
+            print(f"write {path} ({len(image):#x}) -> {name} {ent}", flush=True)
+            cmd(dev, 102, 0)
+            put(dev, len(image), ent, 1, image)
+            print("done", flush=True)
+            return
 
         print("stage", flush=True)
         reserve = bytearray(RESERVE)
@@ -673,6 +683,8 @@ def main():
                     help="transfer step for the compressed path")
     ap.add_argument("--oversize", type=lambda v: int(v, 0), default=None,
                     help="send a command packet of this size (receive probe)")
+    ap.add_argument("--write-part", nargs=2, metavar=("NAME", "FILE"), default=None,
+                    help="write a raw image straight to a named partition")
     ap.add_argument("--overflow", action="store_true",
                     help="plain download whose copy runs into LK memory "
                          "(0xcf800000 + len -> send callback)")
@@ -686,7 +698,8 @@ def main():
     run(args.code.resolve(), args.bundle.resolve(), args.walk, args.span,
         args.block, args.packet, args.out_base, args.size_arg,
         args.probe_chunk, args.last, args.target, args.sweep, args.records,
-        args.step, args.announce, args.oversize, args.overflow)
+        args.step, args.announce, args.oversize, args.overflow,
+        args.write_part)
 
 
 if __name__ == "__main__":
