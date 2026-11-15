@@ -395,14 +395,16 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
             if probe_chunk:
                 # first chunk claims > 1MB: the worker's guard prints and
                 # spins, proving it parsed our stream at all.
-                stream = struct.pack("<I", 0x200000) + bytes(16)
+                stream = struct.pack("<I", 0x200000) + bytes(20)  # 24 bytes
                 total = 0x200000
             else:
                 stream, total = build_packet(WRITE_ADDR, target, base)
             print(f"packet {len(stream):#x} bytes -> {WRITE_ADDR:#x} "
                   f"(total {total:#x})", flush=True)
             start = time.monotonic()
-            ret = put_packet(dev, stream, total, boot, size_arg=size_arg)
+            wait = 20000 if probe_chunk else 180000
+            ret = put_packet(dev, stream, total, boot, timeout=wait,
+                             size_arg=size_arg)
             print(f"invoke {time.monotonic() - start:.3f}s -> {ret:#x}",
                   flush=True)
             if ret != RESULT_OK:
