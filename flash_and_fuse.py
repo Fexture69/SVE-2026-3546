@@ -413,7 +413,7 @@ def walk(dev, dst, left, done, total, mark, step=None):
 
 def run(code_path, bundle_path, walk_len=None, span=None, block=None,
         packet=False, out_base=None, size_arg=None, probe_chunk=False,
-        last=0, target_addr=None):
+        last=0, target_addr=None, sweep=False):
     code = code_path.read_bytes()
     bundle = load_bundle(bundle_path)
     if not code or len(code) > CODE_MAX or CODE_OFF + len(code) > 0x1000:
@@ -462,6 +462,17 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
             target = CONTEXT_RESTORE or CODE_ADDR
             base = OUT_BASE if out_base is None else out_base
             aim = WRITE_ADDR if target_addr is None else target_addr
+            if sweep:
+                for size in (64, 256, 1024, 4096, 8192, 16384, 65536):
+                    data = struct.pack("<I", 0x200000) + bytes(size - 4)
+                    try:
+                        got = put_packet(dev, data, 0x200000, boot,
+                                         timeout=15000)
+                        print(f"sweep {size:>6d}: ok -> {got:#x}", flush=True)
+                    except Exception as exc:
+                        print(f"sweep {size:>6d}: {exc}", flush=True)
+                        break
+                return
             if probe_chunk:
                 # first chunk claims > 1MB: the worker's guard prints and
                 # spins, proving it parsed our stream at all.
@@ -538,6 +549,8 @@ def main():
                     help="last flag on the commit")
     ap.add_argument("--target", type=lambda v: int(v, 0), default=None,
                     help="packet landing address (default WRITE_ADDR)")
+    ap.add_argument("--sweep", action="store_true",
+                    help="sweep packet sizes to find the transport threshold")
     args = ap.parse_args()
     if args.soc != SOC:
         raise ValueError(f"generated loader is for {SOC}, not {args.soc}")
@@ -545,7 +558,7 @@ def main():
         raise ValueError("--span must be a positive multiple of 8")
     run(args.code.resolve(), args.bundle.resolve(), args.walk, args.span,
         args.block, args.packet, args.out_base, args.size_arg,
-        args.probe_chunk, args.last, args.target)
+        args.probe_chunk, args.last, args.target, args.sweep)
 
 
 if __name__ == "__main__":

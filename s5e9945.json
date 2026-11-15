@@ -121,13 +121,13 @@
           "header": true
         },
         {
-          "name": "bl2.bin",
+          "name": "pad0.bin",
           "start": "0x16000",
           "end": "0x96000",
           "stage": null
         },
         {
-          "name": "bl2l.bin",
+          "name": "bl2.bin",
           "start": "0x96000",
           "end": "0x16b000",
           "stage": "st2",
@@ -140,7 +140,7 @@
           "stage": null
         },
         {
-          "name": "dt.bin",
+          "name": "dpm.bin",
           "start": "0x215000",
           "end": "0x217000",
           "stage": "st2",
