@@ -521,13 +521,15 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
             # decompression runs on a worker thread: the reply above can be
             # sent before the ctl lands.  Poke the LK again so the next
             # callback invocation goes through the (now hijacked) global.
-            for attempt in range(3):
-                time.sleep(0.5)
+            # decompression runs on a worker thread and takes real time for
+            # a 1.4 GB fill; poll until it finishes rather than poking once.
+            for attempt in range(24):
+                time.sleep(5.0)
                 try:
-                    again = cmd(dev, 100, 0)
+                    again = cmd(dev, 100, 0, timeout=20000)
                 except Exception as exc:
                     print(f"trigger {attempt}: {exc}", flush=True)
-                    break
+                    continue
                 print(f"trigger {attempt} -> {again:#x}", flush=True)
                 if again == RESULT_OK:
                     return
