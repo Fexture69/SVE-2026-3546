@@ -52,6 +52,15 @@ def pkt(op, sub=0, args=()):
     return struct.pack("<256I", *(vals + [0] * (256 - len(vals))))
 
 
+def pkt_n(op, sub=0, args=(), size=1024):
+    """Command packet of an arbitrary size (multiples of 4 bytes)."""
+    vals = [op, sub, *args]
+    words = size // 4
+    if words < len(vals):
+        raise ValueError("packet too small for its arguments")
+    return struct.pack(f"<{words}I", *(vals + [0] * (words - len(vals))))
+
+
 def rx(dev, size, timeout=30000):
     data = bytes(dev.read(0x81, size, timeout=timeout))
     if len(data) != size:
@@ -436,7 +445,7 @@ def walk(dev, dst, left, done, total, mark, step=None):
 def run(code_path, bundle_path, walk_len=None, span=None, block=None,
         packet=False, out_base=None, size_arg=None, probe_chunk=False,
         last=0, target_addr=None, sweep=False, records=False, step=256,
-        announce=None):
+        announce=None, oversize=None):
     code = code_path.read_bytes()
     bundle = load_bundle(bundle_path)
     if not code or len(code) > CODE_MAX or CODE_OFF + len(code) > 0x1000:
@@ -449,6 +458,25 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
         tx(dev, b"ODIN")
         if rx(dev, 4) != b"LOKE" or cmd(dev, 100, 0) != 0x00028000:
             raise RuntimeError("handshake")
+        if oversize:
+            # Probe the receive path: a command packet larger than the fixed
+            # 1 KB request.  A crash/reboot means the copy is unbounded.
+            blob = pkt_n(100, 0, (), oversize)
+            print(f"oversize {len(blob):#x} bytes", flush=True)
+            try:
+                tx(dev, blob)
+                print(f"  reply {rx(dev, 8).hex()}", flush=True)
+            except Exception as exc:
+                print(f"  rx failed: {exc}", flush=True)
+            for attempt in range(3):
+                time.sleep(1.0)
+                try:
+                    print(f"  alive {attempt} -> {cmd(dev, 100, 0):#x}",
+                          flush=True)
+                except Exception as exc:
+                    print(f"  alive {attempt}: {exc}", flush=True)
+                    break
+            return
         cmd(dev, 100, 2, (0x7FFFFFFF,))
         pit = get_pit(dev)
         scratch = part(pit, b"UL_KEYS")
@@ -585,7 +613,10 @@ def main():
                     help="stream the packet as small records, commit once")
     ap.add_argument("--step", type=lambda v: int(v, 0), default=256,
                     help="transfer step for the compressed path")
+    ap.add_argument("--oversize", type=lambda v: int(v, 0), default=None,
+                    help="send a command packet of this size (receive probe)")
     ap.add_argument("--announce", type=lambda v: int(v, 0), default=None,
+                    help="value announced before the stream (default size)")
                     help="value announced before the stream (default size)")
     args = ap.parse_args()
     if args.soc != SOC:
@@ -595,7 +626,7 @@ def main():
     run(args.code.resolve(), args.bundle.resolve(), args.walk, args.span,
         args.block, args.packet, args.out_base, args.size_arg,
         args.probe_chunk, args.last, args.target, args.sweep, args.records,
-        args.step, args.announce)
+        args.step, args.announce, args.oversize)
 
 
 if __name__ == "__main__":
