@@ -617,7 +617,6 @@ def main():
                     help="send a command packet of this size (receive probe)")
     ap.add_argument("--announce", type=lambda v: int(v, 0), default=None,
                     help="value announced before the stream (default size)")
-                    help="value announced before the stream (default size)")
     args = ap.parse_args()
     if args.soc != SOC:
         raise ValueError(f"generated loader is for {SOC}, not {args.soc}")
