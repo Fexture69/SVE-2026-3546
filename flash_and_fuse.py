@@ -409,8 +409,22 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
                              size_arg=size_arg, last=last)
             print(f"invoke {time.monotonic() - start:.3f}s -> {ret:#x}",
                   flush=True)
-            if ret != RESULT_OK:
-                raise RuntimeError(f"loader {ret:#x}")
+            if ret == RESULT_OK:
+                return
+            # decompression runs on a worker thread: the reply above can be
+            # sent before the ctl lands.  Poke the LK again so the next
+            # callback invocation goes through the (now hijacked) global.
+            for attempt in range(3):
+                time.sleep(0.5)
+                try:
+                    again = cmd(dev, 100, 0)
+                except Exception as exc:
+                    print(f"trigger {attempt}: {exc}", flush=True)
+                    break
+                print(f"trigger {attempt} -> {again:#x}", flush=True)
+                if again == RESULT_OK:
+                    return
+            raise RuntimeError(f"loader {ret:#x}")
             return
         walk(dev, scratch, walk_len, 0, walk_len, 0x4000000, block)
 
