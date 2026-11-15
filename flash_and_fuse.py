@@ -460,7 +460,9 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
             raise RuntimeError("handshake")
         if oversize:
             # Probe the receive path: a command packet larger than the fixed
-            # 1 KB request.  A crash/reboot means the copy is unbounded.
+            # 1 KB request.  Leftover bytes would desync the pipe, so reset
+            # the bus before checking whether the LK is still healthy --
+            # only a wedge after a clean reset indicates real corruption.
             blob = pkt_n(100, 0, (), oversize)
             print(f"oversize {len(blob):#x} bytes", flush=True)
             try:
@@ -468,6 +470,9 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
                 print(f"  reply {rx(dev, 8).hex()}", flush=True)
             except Exception as exc:
                 print(f"  rx failed: {exc}", flush=True)
+            dev.reset()
+            time.sleep(1.5)
+            dev = open_usb()
             for attempt in range(3):
                 time.sleep(1.0)
                 try:
