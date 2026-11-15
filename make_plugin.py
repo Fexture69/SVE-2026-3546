@@ -27,13 +27,13 @@ def build(iters: int) -> bytes:
     struct.pack_into("<I", img, 0x48, HDR)          # header size == entry offset
 
     code = b""
-    code += struct.pack("<I", 0xA9BF27E9)            # stp x9, x10, [sp, #-0x10]!
+    code += struct.pack("<I", 0xA9BF2BE9)            # stp x9, x10, [sp, #-0x10]!
     code += struct.pack("<I", 0xD2A00009 | ((iters >> 16) & 0xFFFF) << 5)  # movz x9, hi, lsl16
     code += struct.pack("<I", 0xF1000529)            # subs x9, x9, #1
     loop = HDR + len(code) - 4
     off = (HDR - (HDR + 8)) >> 2
     code += struct.pack("<I", 0x54000000 | ((off & 0x7FFFF) << 5) | 1)     # b.ne
-    code += struct.pack("<I", 0xA8C127E9)            # ldp x9, x10, [sp], #0x10
+    code += struct.pack("<I", 0xA8C12BE9)            # ldp x9, x10, [sp], #0x10
     code += struct.pack("<I", 0xD65F03C0)            # ret
     img[HDR:HDR + len(code)] = code
     return bytes(img)
