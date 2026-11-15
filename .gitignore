@@ -9,3 +9,4 @@
 /loader.elf
 /loader/bundle.bin
 /loader/bundle_expected.h
+**/__pycache__/
