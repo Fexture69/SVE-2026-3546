@@ -68,7 +68,7 @@ def cmd(dev, op, sub=0, args=(), timeout=30000):
     tx(dev, pkt(op, sub, args), timeout)
     req, ret = struct.unpack("<II", rx(dev, 8, timeout))
     if req != op:
-        raise RuntimeError(f"odin {op}:{sub}")
+        raise RuntimeError(f"odin {op}:{sub} -> reply {req:#x}/{ret:#x}")
     return ret
 
 
