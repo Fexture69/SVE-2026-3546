@@ -231,11 +231,26 @@ def build_packet(target, ctl, base=None):
     return bytes(stream), total
 
 
+def send_stream(dev, data, step=BLOCK):
+    """Send `data` in <=step transfers, padded only to 8 bytes (like put_comp).
+
+    The LK reads exactly the announced length, so over-padding to a whole
+    block makes the device stop reading and the next write goes short.
+    """
+    total = (len(data) + 7) // 8 * 8
+    pad = bytes(total - len(data))
+    body = data + pad
+    for off in range(0, total, step):
+        chunk = body[off:off + step]
+        tx(dev, chunk)
+        rx(dev, 8)
+
+
 def put_packet(dev, stream, total, dst, timeout=600000, size_arg=None):
     """Send one cumulative packet; the LK decompresses it in one pass."""
     value = total if size_arg is None else size_arg
     cmd(dev, 102, 6, (len(stream),))
-    send_data(dev, len(stream), stream, BLOCK)
+    send_stream(dev, stream)
     return cmd(dev, 102, 7, (0, value, 0, dst[0], dst[1], 0), timeout)
 
 
