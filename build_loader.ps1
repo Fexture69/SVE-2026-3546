@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Soc,
     [Parameter(Mandatory = $true)][string]$Bl,
-    [Parameter(Mandatory = $true)][string]$Pit
+    [Parameter(Mandatory = $true)][string]$Pit,
+    [switch]$Probe
 )
 $ErrorActionPreference = 'Stop'
 $env:PYTHONDONTWRITEBYTECODE = '1'
@@ -12,6 +13,7 @@ $clang = Join-Path $llvm 'clang.exe'
 $ldlld = Join-Path $llvm 'ld.lld.exe'
 $objcopy = Join-Path $llvm 'llvm-objcopy.exe'
 
+$name = if ($Probe) { 'loader_probe' } else { 'loader' }
 $bl = (Resolve-Path $Bl).Path
 $pit = (Resolve-Path $Pit).Path
 
@@ -32,6 +34,7 @@ try {
         '-mgeneral-regs-only', '-fno-pic', '-fno-pie', '-fno-unroll-loops',
         '-ffunction-sections', '-fdata-sections', '-I.', '-Iloader'
     )
+    if ($Probe) { $flags += '-DPROBE' }
 
     $objects = @(
         @('loader/start.S', 'start.o'),
@@ -48,13 +51,13 @@ try {
         (Join-Path $tmp 'start.o') (Join-Path $tmp 'payload.o') (Join-Path $tmp 'lzma.o')
     if ($LASTEXITCODE -ne 0) { throw 'link failed' }
 
-    & $objcopy -O binary -j .code (Join-Path $tmp 'loader.elf') loader.bin
+    & $objcopy -O binary -j .code (Join-Path $tmp 'loader.elf') "$name.bin"
     if ($LASTEXITCODE -ne 0) { throw 'objcopy failed' }
-    Copy-Item (Join-Path $tmp 'loader.elf') loader.elf -Force
+    Copy-Item (Join-Path $tmp 'loader.elf') "$name.elf" -Force
 
-    Get-Item loader.bin, loader.elf, loader/bundle.bin |
+    Get-Item "$name.bin", "$name.elf", loader/bundle.bin |
         Select-Object Name, Length
-    Get-FileHash loader.bin, loader/bundle.bin -Algorithm SHA256 |
+    Get-FileHash "$name.bin", loader/bundle.bin -Algorithm SHA256 |
         Select-Object Path, Hash
 }
 finally {

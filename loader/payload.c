@@ -291,11 +291,82 @@ integrity_fail:
     return result;
 }
 
+#ifdef PROBE
+/*
+ * Read-only self-test: proves the exploit path (walk, code exec, reply),
+ * bundle hash, LZMA decode, screen output, SHA256 and blk_bread/partition
+ * mapping -- without writing a single flash sector.
+ */
+static int probe_all(u32 *line)
+{
+    const struct header *header = (const void *)bundle_start;
+    if (check_bundle(header)) {
+        show(line, RED, "BUNDLE FAIL");
+        return 1;
+    }
+    show(line, GREEN, "BUNDLE OK");
+
+    const struct entry *pit_item = entry(header, header->pit_index);
+    if (decode(header, header->pit_index, (void *)PIT_ADDRESS)) {
+        show(line, RED, "PIT DECODE FAIL");
+        return 2;
+    }
+    show(line, GREEN, "PIT DECODE OK");
+
+    const u8 *pit = (const void *)PIT_ADDRESS;
+    const struct pit_entry *part =
+        partition(pit, pit_item->raw_size, pit_item->file, 1);
+    if (!valid_partition(part, pit_item->raw_size)) {
+        show(line, RED, "PIT MAP FAIL");
+        return 3;
+    }
+    show(line, GREEN, "PIT MAP OK");
+
+    /* decode + hash every image, exactly as the real run does before writing */
+    for (u32 index = 0; index != header->count; ++index) {
+        void *output = index == header->pit_index ? (void *)PIT_ADDRESS
+                                                  : (void *)DECOMPRESS_ADDRESS;
+        if (decode(header, index, output)) {
+            show(line, RED, "IMAGE DECODE FAIL");
+            return 6;
+        }
+    }
+    show(line, GREEN, "ALL HASH MATCH");
+
+    u8 *readback = (void *)READBACK_ADDRESS;
+    if (bread(readback, part->lun,
+              part->block_start << (PIT_SHIFT - BLK_SHIFT),
+              pit_item->raw_size)) {
+        show(line, RED, "PIT READ FAIL");
+        return 4;
+    }
+    cache(readback, pit_item->raw_size);
+    if (*(const u32 *)readback != PIT_MAGIC) {
+        show(line, RED, "PIT BAD MAGIC");
+        return 5;
+    }
+    /* the live PIT body must match the one we are about to write */
+    u32 body = pit_item->raw_size - 0x210;
+    for (u32 index = 0; index != body; ++index) {
+        if (readback[index] != pit[index]) {
+            show(line, RED, "PIT BODY MISMATCH");
+            return 5;
+        }
+    }
+    show(line, GREEN, "PIT READBACK OK");
+    return 0;
+}
+#endif
+
 __attribute__((used)) u32 start_impl(void *response, u32 response_size)
 {
     *(volatile u64 *)SEND_CALLBACK = SEND_CALLBACK_DEFAULT;
     u32 line = screen_cursor();
+#ifdef PROBE
+    u32 result = probe_all(&line);
+#else
     u32 result = flash_all(&line);
+#endif
     ((u32 *)response)[1] = result ? 0xE0000000U | result : RESULT_OK;
     cache(response, response_size);
     return send_response(response, response_size);
