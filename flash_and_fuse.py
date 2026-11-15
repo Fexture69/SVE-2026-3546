@@ -89,7 +89,7 @@ def enable_usbdk(backend):
         return False
 
 
-def open_usb():
+def make_backend(usbdk=False):
     # Windows has no system libusb: prefer the DLL shipped by libusb-package,
     # fall back to pyusb's own discovery (Linux/macOS).
     try:
@@ -101,28 +101,50 @@ def open_usb():
         raise RuntimeError(
             "no libusb backend: pip install libusb-package, or install "
             "libusb-1.0 (Linux) / UsbDk (Windows)")
-    enable_usbdk(backend)
-    try:
-        dev = usb.core.find(idVendor=0x04E8, idProduct=0x685D, backend=backend)
-    except usb.core.NoBackendError:
-        raise RuntimeError("libusb could not enumerate USB devices")
-    if dev is None:
-        raise RuntimeError("device not found (is it in download mode?)")
-    try:
-        dev.set_configuration()
-    except usb.core.USBError as exc:
-        # a failed bulk transfer can leave the download-mode stack wedged:
-        # a bus reset clears it far more often than rebinding the driver.
+    if usbdk:
+        enable_usbdk(backend)
+    return backend
+
+
+def open_usb():
+    """Open the phone in download mode, preferring the plain WinUSB path.
+
+    The UsbDk option is only tried as a fallback: enabling it when UsbDk is
+    not installed makes every later open fail with LIBUSB_ERROR_OTHER.
+    """
+    last = None
+    for usbdk in (False, True):
+        backend = make_backend(usbdk)
         try:
-            dev.reset()
-            time.sleep(1.0)
             dev = usb.core.find(idVendor=0x04E8, idProduct=0x685D,
                                 backend=backend)
+        except usb.core.NoBackendError as exc:
+            last = exc
+            continue
+        if dev is None:
+            last = "device not found (is it in download mode?)"
+            continue
+        try:
             dev.set_configuration()
-        except usb.core.USBError as exc2:
-            raise RuntimeError(
-                f"cannot set configuration: {exc2}; on Windows install UsbDk "
-                "(recommended, keeps Odin working) or bind WinUSB with Zadig")
+            break
+        except usb.core.USBError as exc:
+            last = exc
+            # a failed bulk transfer can leave the download-mode stack
+            # wedged: a bus reset clears it far more often than rebinding.
+            try:
+                dev.reset()
+                time.sleep(1.0)
+                dev = usb.core.find(idVendor=0x04E8, idProduct=0x685D,
+                                    backend=backend)
+                dev.set_configuration()
+                break
+            except usb.core.USBError as exc2:
+                last = exc2
+                dev = None
+    else:
+        raise RuntimeError(
+            f"cannot set configuration: {last}; on Windows install UsbDk "
+            "(recommended, keeps Odin working) or bind WinUSB with Zadig")
     try:
         if dev.is_kernel_driver_active(1):
             dev.detach_kernel_driver(1)
