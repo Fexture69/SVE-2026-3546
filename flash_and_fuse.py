@@ -211,6 +211,22 @@ def put_comp(dev, size, dst, data=None, timeout=30000):
     return cmd(dev, 102, 7, (0, 8, 0, dst[0], dst[1], 0), timeout)
 
 
+def put_records(dev, data, total, dst, rec=480, timeout=600000,
+                size_arg=None):
+    """Stream `data` as many small records, then commit once.
+
+    The LK's per-record buffer is between 256 and 1024 bytes, so one large
+    put_packet overruns it.  Each record is announced separately; only the
+    final commit asks for the whole packet to be processed.
+    """
+    value = total if size_arg is None else size_arg
+    for off in range(0, len(data), rec):
+        piece = data[off:off + rec]
+        cmd(dev, 102, 6, (len(piece),))
+        send_stream(dev, piece, step=rec)
+    return cmd(dev, 102, 7, (0, value, 0, dst[0], dst[1], 0), timeout)
+
+
 ZERO_CHUNK = 0x100000
 
 
@@ -413,7 +429,7 @@ def walk(dev, dst, left, done, total, mark, step=None):
 
 def run(code_path, bundle_path, walk_len=None, span=None, block=None,
         packet=False, out_base=None, size_arg=None, probe_chunk=False,
-        last=0, target_addr=None, sweep=False):
+        last=0, target_addr=None, sweep=False, records=False):
     code = code_path.read_bytes()
     bundle = load_bundle(bundle_path)
     if not code or len(code) > CODE_MAX or CODE_OFF + len(code) > 0x1000:
@@ -484,8 +500,12 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
                   f"(total {total:#x})", flush=True)
             start = time.monotonic()
             wait = 20000 if probe_chunk else 180000
-            ret = put_packet(dev, stream, total, boot, timeout=wait,
-                             size_arg=size_arg, last=last)
+            if records:
+                ret = put_records(dev, stream, total, boot, timeout=wait,
+                                  size_arg=size_arg)
+            else:
+                ret = put_packet(dev, stream, total, boot, timeout=wait,
+                                 size_arg=size_arg, last=last)
             print(f"invoke {time.monotonic() - start:.3f}s -> {ret:#x}",
                   flush=True)
             if ret == RESULT_OK:
@@ -551,6 +571,8 @@ def main():
                     help="packet landing address (default WRITE_ADDR)")
     ap.add_argument("--sweep", action="store_true",
                     help="sweep packet sizes to find the transport threshold")
+    ap.add_argument("--records", action="store_true",
+                    help="stream the packet as small records, commit once")
     args = ap.parse_args()
     if args.soc != SOC:
         raise ValueError(f"generated loader is for {SOC}, not {args.soc}")
@@ -558,7 +580,7 @@ def main():
         raise ValueError("--span must be a positive multiple of 8")
     run(args.code.resolve(), args.bundle.resolve(), args.walk, args.span,
         args.block, args.packet, args.out_base, args.size_arg,
-        args.probe_chunk, args.last, args.target, args.sweep)
+        args.probe_chunk, args.last, args.target, args.sweep, args.records)
 
 
 if __name__ == "__main__":
