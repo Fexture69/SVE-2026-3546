@@ -5,6 +5,19 @@ OLD_TAG = b"Samsung Official"
 NEW_TAG = b" Rakesh Official"
 NOP = 0xD503201F
 PACIBSP = 0xD503237F
+RETURN_ZERO = bytes.fromhex("00 00 80 D2 C0 03 5F D6")
+# Return-zero stubs for functions that must not run in the custom-key
+# bootloader (site = string xref minus offset; verified pacibsp start).
+# read_dmc_rpmb is deliberately absent: stubbing it moves the frame that
+# d2() resolves from the read_dmc_rpmb tag and breaks D2 detection.
+SAFETY = (
+    (b"[OTP] USB_BOOT_DISABLE program start\n\0", 0x14,
+     "cm_otp_write_usb_boot_disable"),
+    (b"[FMM] Set RPMB Default info to 512\n\0", 0x30, "get_fmm_data"),
+    (b"CURRENT BINARY: Samsung Official\n\0", 0x28C,
+     "set_warranty_void_bit_reason"),
+    (b"[EFUSE] Set warranty bit(0x%llx)\n\0", 0x60, "set_warrant_bit"),
+)
 DISPLAY = b"display_dmc_screen\0"
 READER = b"read_dmc_rpmb\0"
 INPUT = b"check_otp_input\0"
@@ -193,8 +206,19 @@ def d2(data):
     return at, done
 
 
+def stub_safety(data: bytearray) -> None:
+    for string, back, label in SAFETY:
+        where = one(find_all(data, string))
+        at = one(refs(data, where))[0] - back
+        if u32(data, at) != PACIBSP:
+            raise ValueError(f"{label} prologue")
+        data[at:at + 8] = RETURN_ZERO
+
+
 def patch_lk(data):
-    out = bytearray(data.replace(OLD_TAG, NEW_TAG))
+    buffer = bytearray(data)
+    stub_safety(buffer)
+    out = buffer.replace(OLD_TAG, NEW_TAG)
     found = d2(out)
     if found is None:
         return bytes(out), None
