@@ -329,7 +329,7 @@ def walk(dev, dst, left, done, total, mark, step=None):
 
 
 def run(code_path, bundle_path, walk_len=None, span=None, block=None,
-        packet=False, out_base=None, size_arg=None):
+        packet=False, out_base=None, size_arg=None, probe_chunk=False):
     code = code_path.read_bytes()
     bundle = load_bundle(bundle_path)
     if not code or len(code) > CODE_MAX or CODE_OFF + len(code) > 0x1000:
@@ -377,7 +377,13 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
         if packet:
             target = CONTEXT_RESTORE or CODE_ADDR
             base = OUT_BASE if out_base is None else out_base
-            stream, total = build_packet(WRITE_ADDR, target, base)
+            if probe_chunk:
+                # first chunk claims > 1MB: the worker's guard prints and
+                # spins, proving it parsed our stream at all.
+                stream = struct.pack("<I", 0x200000) + bytes(16)
+                total = 0x200000
+            else:
+                stream, total = build_packet(WRITE_ADDR, target, base)
             print(f"packet {len(stream):#x} bytes -> {WRITE_ADDR:#x} "
                   f"(total {total:#x})", flush=True)
             start = time.monotonic()
@@ -424,13 +430,17 @@ def main():
                     help="decompression output base for --packet")
     ap.add_argument("--size-arg", type=lambda v: int(v, 0), default=None,
                     help="value for the commit's size argument")
+    ap.add_argument("--probe-chunk", action="store_true",
+                    help="send a >1MB first chunk: hangs the worker if the "
+                         "parser reads our stream")
     args = ap.parse_args()
     if args.soc != SOC:
         raise ValueError(f"generated loader is for {SOC}, not {args.soc}")
     if args.span is not None and (args.span < 8 or args.span % 8):
         raise ValueError("--span must be a positive multiple of 8")
     run(args.code.resolve(), args.bundle.resolve(), args.walk, args.span,
-        args.block, args.packet, args.out_base, args.size_arg)
+        args.block, args.packet, args.out_base, args.size_arg,
+        args.probe_chunk)
 
 
 if __name__ == "__main__":
