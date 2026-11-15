@@ -4,6 +4,7 @@ import struct
 OLD_TAG = b"Samsung Official"
 NEW_TAG = b" Rakesh Official"
 NOP = 0xD503201F
+PACIBSP = 0xD503237F
 DISPLAY = b"display_dmc_screen\0"
 READER = b"read_dmc_rpmb\0"
 INPUT = b"check_otp_input\0"
@@ -112,7 +113,17 @@ def call(data, at):
 
 def callers(data, target, start=0, end=None):
     end = len(data) if end is None else min(end, len(data))
-    return [at for at in range(start, end - 3, 4) if call(data, at) == target]
+    return [at for at in range(start, end - 3, 4) if calls(data, at, target)]
+
+
+def calls(data, at, target):
+    found = call(data, at)
+    if found == target:
+        return True
+    # A pointer-auth prologue (pacibsp) precedes the frame, so the real
+    # function entry sits four bytes before the frame that is_frame finds.
+    return (found is not None and found + 4 == target
+            and u32(data, found) == PACIBSP)
 
 
 def movz(insn):
@@ -130,7 +141,7 @@ def download(data, at, display):
     word = u32(data, at)
     if word == NOP:
         done = True
-    elif call(data, at) == display:
+    elif calls(data, at, display):
         done = False
     else:
         return None
@@ -141,7 +152,7 @@ def download(data, at, display):
         return None
     start = at - 0x1C
     if (u32(data, start) & 0xFFC003FF != 0xD10003FF
-            or u32(data, start + 4) & 0xFFC07FFF != 0xA9007BFD
+            or u32(data, start + 4) & 0xFFC07FFF not in (0xA9807BFD, 0xA9007BFD)
             or any(u32(data, start + pos) & 0xFFC003E0 != 0xA90003E0 for pos in (8, 12))
             or u32(data, start + 16) & 0xFFC003FF != 0x910003FD):
         return None

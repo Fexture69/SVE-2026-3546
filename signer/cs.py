@@ -347,7 +347,10 @@ def provision_fw_key(buf: bytearray, pub: bytes) -> int:
         raw_name = bytes(buf[item:item + name_len])
         name = raw_name.split(b"\0", 1)[0]
         current = _u32(buf, item + name_len)
-        if not name or any(raw_name[len(name):]) or name in names or current in indexes:
+        # Slots may share key material: a single AVB key is commonly stored
+        # under several image names, so equal CRC indexes are legitimate.
+        # Only the names themselves have to stay unique.
+        if not name or any(raw_name[len(name):]) or name in names:
             raise ValueError("duplicate keystorage key")
         names.add(name)
         indexes.add(current)

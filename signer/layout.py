@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOCS = ("s5e8825", "s5e9925")
+SOCS = ("s5e8825", "s5e9925", "s5e9945")
 PROFILE_KEYS = {
     "soc", "signing", "key_image", "vbmeta_image", "lk", "loader", "images",
 }

@@ -281,7 +281,8 @@ def run(code_path, bundle_path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--soc", required=True, choices=("s5e8825", "s5e9925"))
+    ap.add_argument("--soc", required=True,
+                    choices=("s5e8825", "s5e9925", "s5e9945"))
     ap.add_argument("code", type=Path, nargs="?", default=ROOT / "loader.bin")
     ap.add_argument("--bundle", type=Path, default=ROOT / "loader/bundle.bin")
     args = ap.parse_args()

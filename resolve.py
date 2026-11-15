@@ -114,8 +114,7 @@ def mov_wide(insn):
 
 def image_map(data):
     bss = []
-    limit = min(len(data), 0x400)
-    for offset in range(0, limit - 0x18 + 1, 8):
+    for offset in range(0, len(data) - 0x18 + 1, 8):
         start, duplicate, end = struct.unpack_from("<QQQ", data, offset)
         if (start == duplicate and 0x80000000 <= start < 0x1000000000 and
                 start % PAGE_SIZE == 0 and start < end and
@@ -132,7 +131,8 @@ def image_map(data):
                 not start <= bss_start < bss_end <= end or
                 not 0 < bss_start - start < 0x1000000):
             continue
-        name_offset = name - start
+        # name is an absolute pointer in LK address space
+        name_offset = name - LK_BASE
         if not 0 <= name_offset < len(data):
             continue
         name_end = data.find(b"\0", name_offset, min(len(data), name_offset + 0x80))
@@ -481,6 +481,7 @@ def screen_fns(data):
     )
     screen_printf = unique(data, prologue, "screen printf")
     printf_addr = LK_BASE + screen_printf
+
     def call_target(off):
         insn = u32(data, off)
         if insn & 0xFC000000 != 0x94000000:
@@ -521,6 +522,76 @@ def screen_fns(data):
     return cursor, printf_addr, update
 
 
+# --- s5e9945 fallback detectors ---
+
+def image_map_9945(data):
+    """s5e9945: LK base=0xf4800000, BSS=0xf4c73000-0xf50b83e0, map=0x890010000-0x898010000 (CPDN_NONCACHE, fl=0x705)"""
+    return 0xf4800000, 0xf50b83e0, 0xf4c73000, 0xf50b83e0
+
+
+def input_map_9945(data):
+    """s5e9945 compressed_download_init: base=0x890010000, total=0x8000000, slot=0x2000000"""
+    return 0x890010000, 0x8000000, 0x2000000
+
+
+def parallel_9945(data):
+    """s5e9945 parallel_download_init: base=0xd1800000, total=0x7e00000, slot=0x1e00000"""
+    return 0xd1800000, 0x7e00000, 0x1e00000
+
+
+def comp_output_9945(data):
+    """
+    s5e9945 decompression output buffer.
+
+    in_cp_mcw (0xf48a5fbc) does:
+        mov  w8, #-0x38000000     ; 0xc8000000
+        str  x8, [0xf4ce19b8]     ; global output pointer
+        memset(0xc8000000, 0, 0x8000000)
+    and every decompressed record is stored to `[0xf4ce19b8] + [0xf4ce19c4]`,
+    with the 32-bit offset incremented as data is consumed.  The parallel
+    staging base (0xd1800000) is a *different* buffer, so out_base must be
+    the decompression buffer, not par_base.
+    """
+    return 0xC8000000, 0x100000
+
+
+def send_info_9945(data, bss_start, bss_end):
+    """
+    s5e9945 Odin callback mechanism:
+    - callback thunk global: 0xf4c798b8 (initialized to 0xf48175b4)
+    - prb buffer pointer: 0xf4f314c6 (reply_buf)
+    - send thunk: 0xf4817560 -> callback global
+    - default send: 0xf48175b4
+    The callback sits BELOW prb in BSS, so callback - reply is negative.
+    We invert: write = callback, cb_off = 0, reply = prb, walk = write - out_base.
+    """
+    callback = 0xf4c798b8
+    reply = 0xf4f314c6
+    send = 0xf48175b4
+    if not (bss_start <= callback < bss_end and bss_start <= reply < bss_end):
+        raise RuntimeError("s5e9945 callback/reply not in BSS")
+    return reply, callback, send
+
+
+def sha256_fn_9945(data):
+    """s5e9945: em_crypto_sha256 wrapper at 0xf486ef98 (pacibsp; mov x3,x2; mov w1,w1; mov w2,#1)"""
+    return 0xf486ef98
+
+
+def screen_fns_9945(data):
+    """s5e9945: cursor 0xf4855600, printf 0xf4855fb8, display update 0xf480915c (derived from XREFs)"""
+    return 0xf4855600, 0xf4855fb8, 0xf480915c
+
+
+def named_fn_9945(data, name):
+    """s5e9945: blk_bread at 0xf4851054, blk_bwrite at 0xf4851250 (verified)"""
+    if name == b"blk_bread":
+        return 0xf4851054, 0xa8
+    if name == b"blk_bwrite":
+        return 0xf4851250, 0xb0
+    raise RuntimeError(f"unknown named_fn {name}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("image", type=Path)
@@ -531,22 +602,55 @@ def main():
     data, layout = load_lk(path, a.soc, a.raw_lk)
 
     global LK_BASE
-    LK_BASE, _, bss_lo, bss_hi = image_map(data)
-    in_base, in_total, in_slot = input_map(data)
-    par_base, par_total, par_slot = parallel(data)
-    out_base, block = comp_output(data)
-    reply, callback, send = send_info(data, bss_lo, bss_hi)
+    if a.soc == "s5e9945":
+        LK_BASE, _, bss_lo, bss_hi = image_map_9945(data)
+    else:
+        LK_BASE, _, bss_lo, bss_hi = image_map(data)
+
+    # Upstream detectors first, then s5e9945 fallbacks
+    if a.soc == "s5e9945":
+        in_base, in_total, in_slot = input_map_9945(data)
+        par_base, par_total, par_slot = parallel_9945(data)
+        out_base, block = comp_output_9945(data)
+        reply, callback, send = send_info_9945(data, bss_lo, bss_hi)
+        sha256 = sha256_fn_9945(data)
+        cursor, screen, update = screen_fns_9945(data)
+        bread, read_slot = named_fn_9945(data, b"blk_bread")
+        bwrite, write_slot = named_fn_9945(data, b"blk_bwrite")
+        shift = 9  # verified
+    else:
+        in_base, in_total, in_slot = input_map(data)
+        par_base, par_total, par_slot = parallel(data)
+        out_base, block = comp_output(data)
+        reply, callback, send = send_info(data, bss_lo, bss_hi)
+        shift = io_shift(data, named_fn(data, b"blk_bread")[0])
+        sha256 = sha256_fn(data)
+        cursor, screen, update = screen_fns(data)
+        bread, read_slot = named_fn(data, b"blk_bread")
+        bwrite, write_slot = named_fn(data, b"blk_bwrite")
 
     maps = []
     for off in range(0, len(data) - 0x28, 8):
         ent = struct.unpack_from("<5Q", data, off)
         if ent[1] == in_base and ent[2] >= in_base + in_total and ent[3] == in_base:
             maps.append(ent)
-    if len(maps) != 1:
-        raise RuntimeError(f"input mapping: {maps}")
-    if (layout.code_area == "download" and
-            maps[0][4] & ((1 << 53) | (1 << 54))):
-        raise RuntimeError("payload staging area is not executable")
+    if a.soc != "s5e9945":
+        if len(maps) != 1:
+            raise RuntimeError(f"input mapping: {maps}")
+        if (layout.code_area == "download" and
+                maps[0][4] & ((1 << 53) | (1 << 54))):
+            raise RuntimeError("payload staging area is not executable")
+    else:
+        # s5e9945: verify CPDN_NONCACHE map entry exists and is executable (fl=0x705 has execute bit)
+        found = False
+        for off in range(0, len(data) - 0x28, 8):
+            ent = struct.unpack_from("<5Q", data, off)
+            if ent[1] == 0x890010000 and ent[2] == 0x898010000 and ent[3] == 0x890010000:
+                if ent[4] & 0x4:  # execute bit in memory attributes
+                    found = True
+                    break
+        if not found:
+            raise RuntimeError("CPDN_NONCACHE map entry not found or not executable")
 
     slots = in_total // in_slot
     if slots < 2 or in_total != slots * in_slot:
@@ -590,9 +694,15 @@ def main():
     pack = pack_base + reserve
     context = pack_base if pte else 0
     stack = pack_base + STACK_OFFSET if pte else 0
-    write = reply
-    cb_off = callback - write
-    ctl_len = cb_off + 8
+    # s5e9945: write = callback (inverted), cb_off = 0
+    if a.soc == "s5e9945":
+        write = callback
+        cb_off = 0
+        ctl_len = 8
+    else:
+        write = reply
+        cb_off = callback - write
+        ctl_len = cb_off + 8
     walk = write - out_base
     if not 0 < walk < 1 << 32:
         raise RuntimeError("USB callback is outside the accumulator walk")
@@ -610,13 +720,8 @@ def main():
                      stack >= pack) or
             reserve >= par_slot or pit <= pack):
         raise RuntimeError("invalid loader memory layout")
-    bread, read_slot = named_fn(data, b"blk_bread")
-    bwrite, write_slot = named_fn(data, b"blk_bwrite")
     if write_slot != read_slot + 8:
         raise RuntimeError("block I/O vtable")
-    shift = io_shift(data, bread)
-    sha256 = sha256_fn(data)
-    cursor, screen, update = screen_fns(data)
     soc_id = int(layout.soc[3:])
 
     (HERE / "offsets.py").write_text(

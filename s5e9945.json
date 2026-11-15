@@ -1,0 +1,237 @@
+{
+  "soc": "s5e9945",
+  "signing": {
+    "codesigner_type": 4,
+    "st2_tee_key": "signer/keys/4/st2t.pem",
+    "st2_ree_key": "signer/keys/4/st2r.pem",
+    "avb_private_key": "signer/keys/avb.pem",
+    "avb_public_key": "signer/keys/avb.pubkey"
+  },
+  "key_image": "fld.bin",
+  "vbmeta_image": "vbmeta.img",
+  "lk": {
+    "image": "sboot.bin",
+    "part": "lk.bin"
+  },
+  "loader": {
+    "code_area": "download",
+    "alias_base": null
+  },
+  "images": [
+    {
+      "name": "fld.bin",
+      "bundle": true,
+      "parts": [
+        {
+          "name": "stsocbl1.bin",
+          "start": "0x0",
+          "end": "0x1000",
+          "stage": "st1"
+        },
+        {
+          "name": "dbgc.bin",
+          "start": "0x1000",
+          "end": "0x10000",
+          "stage": "st2",
+          "key": "tee"
+        },
+        {
+          "name": "hostbl1.bin",
+          "start": "0x10000",
+          "end": "0x2c000",
+          "stage": "st2",
+          "key": "tee"
+        },
+        {
+          "name": "tail.bin",
+          "start": "0x2c000",
+          "end": null,
+          "stage": null
+        }
+      ]
+    },
+    {
+      "name": "harx.bin",
+      "bundle": true,
+      "parts": [
+        {
+          "name": "harx.bin",
+          "start": "0x0",
+          "end": "0x200000",
+          "stage": "st2",
+          "key": "ree"
+        },
+        {
+          "name": "tail.bin",
+          "start": "0x200000",
+          "end": null,
+          "stage": null
+        }
+      ]
+    },
+    {
+      "name": "keystorage.bin",
+      "bundle": true,
+      "parts": [
+        {
+          "name": "keystorage.bin",
+          "start": "0x0",
+          "end": "0x4000",
+          "stage": "st2",
+          "key": "tee",
+          "avb_keys": true
+        },
+        {
+          "name": "tail.bin",
+          "start": "0x4000",
+          "end": null,
+          "stage": null
+        }
+      ]
+    },
+    {
+      "name": "ldfw.img",
+      "bundle": true,
+      "parts": [
+        {
+          "name": "ldfw.bin",
+          "start": "0x0",
+          "end": "0x166000",
+          "stage": "st2",
+          "key": "tee"
+        },
+        {
+          "name": "tail.bin",
+          "start": "0x166000",
+          "end": null,
+          "stage": null
+        }
+      ]
+    },
+    {
+      "name": "sboot.bin",
+      "bundle": true,
+      "parts": [
+        {
+          "name": "epbl.bin",
+          "start": "0x0",
+          "end": "0x16000",
+          "stage": "st2",
+          "key": "tee",
+          "header": true
+        },
+        {
+          "name": "bl2.bin",
+          "start": "0x16000",
+          "end": "0x96000",
+          "stage": null
+        },
+        {
+          "name": "bl2l.bin",
+          "start": "0x96000",
+          "end": "0x16b000",
+          "stage": "st2",
+          "key": "ree"
+        },
+        {
+          "name": "pad.bin",
+          "start": "0x16b000",
+          "end": "0x215000",
+          "stage": null
+        },
+        {
+          "name": "dt.bin",
+          "start": "0x215000",
+          "end": "0x217000",
+          "stage": "st2",
+          "key": "tee"
+        },
+        {
+          "name": "pad2.bin",
+          "start": "0x217000",
+          "end": "0x219000",
+          "stage": null
+        },
+        {
+          "name": "lk.bin",
+          "start": "0x219000",
+          "end": "0x619000",
+          "stage": "st2",
+          "key": "ree"
+        },
+        {
+          "name": "el3_mon.bin",
+          "start": "0x619000",
+          "end": "0x699000",
+          "stage": "st2",
+          "key": "tee"
+        },
+        {
+          "name": "tail.bin",
+          "start": "0x699000",
+          "end": null,
+          "stage": null
+        }
+      ]
+    },
+    {
+      "name": "dtp.bin",
+      "bundle": true,
+      "version": false
+    },
+    {
+      "name": "tzar.img",
+      "bundle": true
+    },
+    {
+      "name": "tzsw.img",
+      "bundle": true,
+      "parts": [
+        {
+          "name": "tzsw.bin",
+          "start": "0x0",
+          "end": "0x180000",
+          "stage": "st2",
+          "key": "tee"
+        },
+        {
+          "name": "tail.bin",
+          "start": "0x180000",
+          "end": null,
+          "stage": null
+        }
+      ]
+    },
+    {
+      "name": "uh.bin",
+      "bundle": true
+    },
+    {
+      "name": "svm.bin",
+      "key": "tee",
+      "bundle": true,
+      "version": false
+    },
+    {
+      "name": "ssp.img",
+      "stage": null,
+      "key": null,
+      "bundle": true,
+      "version": false,
+      "preserve": true
+    },
+    {
+      "name": "up_param.bin",
+      "stage": null,
+      "key": null,
+      "bundle": false,
+      "version": false
+    },
+    {
+      "name": "vbmeta.img",
+      "stage": "st2",
+      "key": "ree",
+      "bundle": true
+    }
+  ]
+}

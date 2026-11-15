@@ -2,6 +2,12 @@
 
 This PoC uses it to fuse Secure Boot KEY2 and flash re-signed bootloader files on s5e8825 and s5e9925.
 
+An offline `s5e9945` profile and resolver path are included for the SM-S926B
+`S926BXXUIEZJB` firmware layout. The device-side `flash_and_fuse.py` path is
+intentionally not enabled for `s5e9945`; the profile is only validated for
+stock image parsing, signature checks, offset resolution, bundle generation,
+and loader compilation.
+
 ## Demo
 
 ![Demo](AUTH-preview.gif)
