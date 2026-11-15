@@ -207,7 +207,7 @@ def send_data(dev, size, head=b"", step=BLOCK):
 def put(dev, size, dst, last, head=b""):
     cmd(dev, 102, 2, (size,))
     send_data(dev, size, head)
-    cmd(dev, 102, 3, (0, size, 0, dst[0], dst[1], last))
+    return cmd(dev, 102, 3, (0, size, 0, dst[0], dst[1], last))
 
 
 def put_comp(dev, size, dst, data=None, timeout=30000):
@@ -524,8 +524,9 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
             ent = part(pit, name.encode())
             print(f"write {path} ({len(image):#x}) -> {name} {ent}", flush=True)
             cmd(dev, 102, 0)
-            put(dev, len(image), ent, 1, image)
-            print("done", flush=True)
+            ret = put(dev, len(image), ent, 1, image)
+            print(f"reply {ret:#x}", flush=True)
+            print("done" if ret == RESULT_OK else "FAILED", flush=True)
             return
 
         print("stage", flush=True)
