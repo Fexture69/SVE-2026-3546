@@ -346,7 +346,7 @@ def walk(dev, dst, left, done, total, mark, step=None):
 
 def run(code_path, bundle_path, walk_len=None, span=None, block=None,
         packet=False, out_base=None, size_arg=None, probe_chunk=False,
-        last=0):
+        last=0, target_addr=None):
     code = code_path.read_bytes()
     bundle = load_bundle(bundle_path)
     if not code or len(code) > CODE_MAX or CODE_OFF + len(code) > 0x1000:
@@ -400,7 +400,8 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None,
                 stream = struct.pack("<I", 0x200000) + bytes(20)  # 24 bytes
                 total = 0x200000
             else:
-                stream, total = build_packet(WRITE_ADDR, target, base)
+                aim = WRITE_ADDR if target_addr is None else target_addr
+                stream, total = build_packet(aim, target, base)
             print(f"packet {len(stream):#x} bytes -> {WRITE_ADDR:#x} "
                   f"(total {total:#x})", flush=True)
             start = time.monotonic()
@@ -468,6 +469,8 @@ def main():
                          "parser reads our stream")
     ap.add_argument("--last", type=lambda v: int(v, 0), default=0,
                     help="last flag on the commit")
+    ap.add_argument("--target", type=lambda v: int(v, 0), default=None,
+                    help="packet landing address (default WRITE_ADDR)")
     args = ap.parse_args()
     if args.soc != SOC:
         raise ValueError(f"generated loader is for {SOC}, not {args.soc}")
@@ -475,7 +478,7 @@ def main():
         raise ValueError("--span must be a positive multiple of 8")
     run(args.code.resolve(), args.bundle.resolve(), args.walk, args.span,
         args.block, args.packet, args.out_base, args.size_arg,
-        args.probe_chunk, args.last)
+        args.probe_chunk, args.last, args.target)
 
 
 if __name__ == "__main__":
