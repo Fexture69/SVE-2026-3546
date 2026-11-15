@@ -540,19 +540,14 @@ def parallel_9945(data):
 
 
 def comp_output_9945(data):
-    """
-    s5e9945 decompression output buffer.
+    """s5e9945 decompression output buffer.
 
-    in_cp_mcw (0xf48a5fbc) does:
-        mov  w8, #-0x38000000     ; 0xc8000000
-        str  x8, [0xf4ce19b8]     ; global output pointer
-        memset(0xc8000000, 0, 0x8000000)
-    and every decompressed record is stored to `[0xf4ce19b8] + [0xf4ce19c4]`,
-    with the 32-bit offset incremented as data is consumed.  The parallel
-    staging base (0xd1800000) is a *different* buffer, so out_base must be
-    the decompression buffer, not par_base.
+    decompress_packet (0xf48cca54) writes to `0x8_9A01_0000 + x22`, where
+    x22 accumulates each chunk's *decompressed* size within one packet.  The
+    0x8_<phys> form is the DRAM alias, so the physical base is 0x9A010000.
+    0xc8000000 is a different buffer (the 16-byte record receive area).
     """
-    return 0xC8000000, 0x100000
+    return 0x9A010000, 0x100000
 
 
 def send_info_9945(data, bss_start, bss_end):

@@ -25,6 +25,7 @@ from offsets import (
     CTL_LEN,
     MMU_DISABLE,
     MMU_ENABLE,
+    OUT_BASE,
     PACK_ADDR,
     PACK_MAX,
     PACK_SLOT,
@@ -179,6 +180,65 @@ def put_comp(dev, size, dst, data=None, timeout=30000):
     return cmd(dev, 102, 7, (0, 8, 0, dst[0], dst[1], 0), timeout)
 
 
+ZERO_CHUNK = 0x100000
+
+
+def lz4_zeros(size):
+    """Raw LZ4 block (no frame) that decompresses to `size` zero bytes.
+
+    Layout: [token][literal][offset=1][match-ext][token][5 literals]
+    which yields 1 + (size-6) + 5 = size bytes, all zero.
+    """
+    if size < 13:
+        raise ValueError("lz4_zeros: block too short")
+    code = (size - 6) - 4          # LZ4 stores matchlen - 4
+    token = (1 << 4) | min(code, 15)
+    out = bytearray([token, 0x00, 0x01, 0x00])  # token, literal, offset
+    if code >= 15:
+        rest = code - 15
+        while rest >= 255:
+            out.append(255)
+            rest -= 255
+        out.append(rest)
+    out.append(5 << 4)              # trailing literal run
+    out += bytes(5)
+    return bytes(out)
+
+
+def build_packet(target, ctl, base=None):
+    """One packet whose decompressed output ends with `ctl` at `target`.
+
+    Returns (stream, total) where total is the uncompressed size the LK
+    must be told, and the stream is a chunk list ending in a stored chunk
+    carrying the control block at the right offset.
+    """
+    base = OUT_BASE if base is None else base
+    if isinstance(ctl, int):
+        ctl = struct.pack("<Q", ctl)
+    target_off = target - base
+    count = target_off // ZERO_CHUNK + 1
+    total = count * ZERO_CHUNK
+    ctl_at = target_off - (count - 1) * ZERO_CHUNK
+    if not 0 <= ctl_at <= ZERO_CHUNK - len(ctl):
+        raise RuntimeError("control block does not fit the final chunk")
+    stream = bytearray()
+    for index in range(count - 1):
+        block = lz4_zeros(ZERO_CHUNK)
+        stream += struct.pack("<I", len(block)) + block
+    payload = bytearray(ZERO_CHUNK)
+    payload[ctl_at:ctl_at + len(ctl)] = ctl
+    stream += struct.pack("<I", 0x80000000 | len(payload)) + payload
+    return bytes(stream), total
+
+
+def put_packet(dev, stream, total, dst, timeout=600000, size_arg=None):
+    """Send one cumulative packet; the LK decompresses it in one pass."""
+    value = total if size_arg is None else size_arg
+    cmd(dev, 102, 6, (len(stream),))
+    send_data(dev, len(stream), stream, BLOCK)
+    return cmd(dev, 102, 7, (0, value, 0, dst[0], dst[1], 0), timeout)
+
+
 def load_bundle(path):
     data = path.read_bytes()
     if not 64 <= len(data) <= PACK_MAX:
@@ -268,7 +328,8 @@ def walk(dev, dst, left, done, total, mark, step=None):
     return done, mark
 
 
-def run(code_path, bundle_path, walk_len=None, span=None, block=None):
+def run(code_path, bundle_path, walk_len=None, span=None, block=None,
+        packet=False, out_base=None, size_arg=None):
     code = code_path.read_bytes()
     bundle = load_bundle(bundle_path)
     if not code or len(code) > CODE_MAX or CODE_OFF + len(code) > 0x1000:
@@ -313,6 +374,19 @@ def run(code_path, bundle_path, walk_len=None, span=None, block=None):
 
         cmd(dev, 100, 5, (8,))
         cmd(dev, 102, 5)
+        if packet:
+            target = CONTEXT_RESTORE or CODE_ADDR
+            base = OUT_BASE if out_base is None else out_base
+            stream, total = build_packet(WRITE_ADDR, target, base)
+            print(f"packet {len(stream):#x} bytes -> {WRITE_ADDR:#x} "
+                  f"(total {total:#x})", flush=True)
+            start = time.monotonic()
+            ret = put_packet(dev, stream, total, boot, size_arg=size_arg)
+            print(f"invoke {time.monotonic() - start:.3f}s -> {ret:#x}",
+                  flush=True)
+            if ret != RESULT_OK:
+                raise RuntimeError(f"loader {ret:#x}")
+            return
         walk(dev, scratch, walk_len, 0, walk_len, 0x4000000, block)
 
         print(f"trigger {WRITE_ADDR + (walk_len - WALK_LEN):#x}", flush=True)
@@ -344,13 +418,19 @@ def main():
                     help="control-block window size; target repeated every 8 bytes")
     ap.add_argument("--block", type=lambda v: int(v, 0), default=None,
                     help="walk block size (one oversized block tests the overflow)")
+    ap.add_argument("--packet", action="store_true",
+                    help="send one cumulative packet (chunks accumulate)")
+    ap.add_argument("--out-base", type=lambda v: int(v, 0), default=None,
+                    help="decompression output base for --packet")
+    ap.add_argument("--size-arg", type=lambda v: int(v, 0), default=None,
+                    help="value for the commit's size argument")
     args = ap.parse_args()
     if args.soc != SOC:
         raise ValueError(f"generated loader is for {SOC}, not {args.soc}")
     if args.span is not None and (args.span < 8 or args.span % 8):
         raise ValueError("--span must be a positive multiple of 8")
     run(args.code.resolve(), args.bundle.resolve(), args.walk, args.span,
-        args.block)
+        args.block, args.packet, args.out_base, args.size_arg)
 
 
 if __name__ == "__main__":
